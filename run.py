@@ -12,7 +12,7 @@ import numpy as np
 import util
 
 
-CMT = CMT.CMT()
+CMTobj = CMT.CMT()
 
 parser = argparse.ArgumentParser(description='Track an object.')
 
@@ -30,8 +30,8 @@ parser.add_argument('--skip', dest='skip', action='store', default=None, help='S
 
 args = parser.parse_args()
 
-CMT.estimate_scale = args.estimate_scale
-CMT.estimate_rotation = args.estimate_rotation
+CMTobj.estimate_scale = args.estimate_scale
+CMTobj.estimate_rotation = args.estimate_rotation
 
 if args.pause:
 	pause_time = 0
@@ -65,12 +65,12 @@ if args.challenge:
 	tl, br = (util.array_to_int_tuple(init_region[:2]), util.array_to_int_tuple(init_region[:2] + init_region[2:4] - 1))
 
 	try:
-		CMT.initialise(im_gray0, tl, br)
+		CMTobj.initialise(im_gray0, tl, br)
 		while frame < num_frames:
 			im = cv2.imread(images[frame])
 			im_gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
-			CMT.process_frame(im_gray)
-			results[frame, :] = CMT.bb
+			CMTobj.process_frame(im_gray)
+			results[frame, :] = CMTobj.bb
 
 			# Advance frame number
 			frame += 1
@@ -154,12 +154,22 @@ else:
 		# Get rectangle input from user
 		(tl, br) = util.get_rect(im_draw)
 
-	print 'using', tl, br, 'as init bb'
+	print 'using', tl, br, 'as init bb', im_gray0.shape
 
 
-	CMT.initialise(im_gray0, tl, br)
+	CMTobj.initialise(im_gray0, tl, br)
 
+	cmt_list = []
+	cmt_list.append(CMTobj)
+
+	active_points_ini = CMTobj.active_keypoints.shape[0]
+	print "Active_points_ini=", active_points_ini
 	frame = 1
+	last_inserted_frame = 0	
+	tl_min_x = im_gray0.shape[1]
+	tl_min_y = im_gray0.shape[0]
+	br_max_x = 0
+	br_max_y = 0
 	while True:
 		# Read image
 		status, im = cap.read()
@@ -168,53 +178,116 @@ else:
 		im_gray = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
 		im_draw = np.copy(im)
 
-		tic = time.time()
-		CMT.process_frame(im_gray)
-		toc = time.time()
+		cmt_idx = 0
+		max_keypoints = 0
+		max_keypoint_inst = None
+		tl_min_x = im_gray0.shape[1]
+		tl_min_y = im_gray0.shape[0]
+		br_max_x = 0
+		br_max_y = 0
+		
+		for CMT_inst in cmt_list:
+			tic = time.time()
+			CMT_inst.process_frame(im_gray)
+			toc = time.time()
+	
+			# Display results
+	
+			# Draw updated estimate
+			if CMT_inst.has_result:
+	
+				cv2.line(im_draw, CMT_inst.tl, CMT_inst.tr, (255, (cmt_idx % 6 ) * 50, 0), 4)
+				cv2.line(im_draw, CMT_inst.tr, CMT_inst.br, (255, (cmt_idx % 6 ) * 50, 0), 4)
+				cv2.line(im_draw, CMT_inst.br, CMT_inst.bl, (255, (cmt_idx % 6 ) * 50, 0), 4)
+				cv2.line(im_draw, CMT_inst.bl, CMT_inst.tl, (255, (cmt_idx % 6 ) * 50, 0), 4)
+				
+				if CMT_inst.tl[0] < tl_min_x:
+					tl_min_x = CMT_inst.tl[0]
+					 
+				if CMT_inst.tl[1] < tl_min_y:
+					tl_min_y = CMT_inst.tl[1] 
 
-		# Display results
+				if CMT_inst.br[0] > br_max_x:
+					br_max_x = CMT_inst.br[0] 
 
-		# Draw updated estimate
-		if CMT.has_result:
+				if CMT_inst.br[1] > br_max_y:
+					br_max_y = CMT_inst.br[1] 
 
-			cv2.line(im_draw, CMT.tl, CMT.tr, (255, 0, 0), 4)
-			cv2.line(im_draw, CMT.tr, CMT.br, (255, 0, 0), 4)
-			cv2.line(im_draw, CMT.br, CMT.bl, (255, 0, 0), 4)
-			cv2.line(im_draw, CMT.bl, CMT.tl, (255, 0, 0), 4)
+				if CMT_inst.tr[0] > br_max_x:
+					br_max_x = CMT_inst.tr[0] 
 
-		util.draw_keypoints(CMT.tracked_keypoints, im_draw, (255, 255, 255))
-		# this is from simplescale
-		util.draw_keypoints(CMT.votes[:, :2], im_draw)  # blue
-		util.draw_keypoints(CMT.outliers[:, :2], im_draw, (0, 0, 255))
+				if CMT_inst.tr[1] < tl_min_y:
+					tl_min_y = CMT_inst.tr[1] 
 
-		if args.output is not None:
-			# Original image
-			cv2.imwrite('{0}/input_{1:08d}.png'.format(args.output, frame), im)
-			# Output image
-			cv2.imwrite('{0}/output_{1:08d}.png'.format(args.output, frame), im_draw)
 
-			# Keypoints
-			with open('{0}/keypoints_{1:08d}.csv'.format(args.output, frame), 'w') as f:
-				f.write('x y\n')
-				np.savetxt(f, CMT.tracked_keypoints[:, :2], fmt='%.2f')
+				if CMT_inst.bl[0] < tl_min_x:
+					tl_min_x = CMT_inst.bl[0] 
 
-			# Outlier
-			with open('{0}/outliers_{1:08d}.csv'.format(args.output, frame), 'w') as f:
-				f.write('x y\n')
-				np.savetxt(f, CMT.outliers, fmt='%.2f')
+				if CMT_inst.bl[1] > br_max_y:
+					br_max_y = CMT_inst.bl[1] 
 
-			# Votes
-			with open('{0}/votes_{1:08d}.csv'.format(args.output, frame), 'w') as f:
-				f.write('x y\n')
-				np.savetxt(f, CMT.votes, fmt='%.2f')
+				print tl_min_x, tl_min_y,  br_max_x, br_max_y
 
-			# Bounding box
-			with open('{0}/bbox_{1:08d}.csv'.format(args.output, frame), 'w') as f:
-				f.write('x y\n')
-				# Duplicate entry tl is not a mistake, as it is used as a drawing instruction
-				np.savetxt(f, np.array((CMT.tl, CMT.tr, CMT.br, CMT.bl, CMT.tl)), fmt='%.2f')
 
+				if CMT_inst.active_keypoints.shape[0] > max_keypoints:
+					max_keypoints = CMT_inst.active_keypoints.shape[0]
+					max_keypoint_inst = CMT_inst
+	
+			util.draw_keypoints(CMT_inst.tracked_keypoints, im_draw, (255, 255, 255))
+			# this is from simplescale
+			util.draw_keypoints(CMT_inst.votes[:, :2], im_draw)  # blue
+			util.draw_keypoints(CMT_inst.outliers[:, :2], im_draw, (0, 0, 255))
+	
+			if args.output is not None:
+				# Original image
+				cv2.imwrite('{0}/input_{1:08d}.png'.format(args.output, frame), im)
+				# Output image
+				cv2.imwrite('{0}/output_{1:08d}.png'.format(args.output, frame), im_draw)
+	
+				# Keypoints
+				with open('{0}/keypoints_{1:08d}.csv'.format(args.output, frame), 'w') as f:
+					f.write('x y\n')
+					np.savetxt(f, CMT_inst.tracked_keypoints[:, :2], fmt='%.2f')
+	
+				# Outlier
+				with open('{0}/outliers_{1:08d}.csv'.format(args.output, frame), 'w') as f:
+					f.write('x y\n')
+					np.savetxt(f, CMT_inst.outliers, fmt='%.2f')
+	
+				# Votes
+				with open('{0}/votes_{1:08d}.csv'.format(args.output, frame), 'w') as f:
+					f.write('x y\n')
+					np.savetxt(f, CMT_inst.votes, fmt='%.2f')
+	
+				# Bounding box
+				with open('{0}/bbox_{1:08d}.csv'.format(args.output, frame), 'w') as f:
+					f.write('x y\n')
+					# Duplicate entry tl is not a mistake, as it is used as a drawing instruction
+					np.savetxt(f, np.array((CMT_inst.tl, CMT_inst.tr, CMT_inst.br, CMT_inst.bl, CMT_inst.tl)), fmt='%.2f')
+	
+			if 0 and not args.quiet:
+				cv2.imshow('main', im_draw)
+	
+				# Check key input
+				k = cv2.waitKey(pause_time)
+				key = chr(k & 255)
+				if key == 'q':
+					break
+				if key == 'd':
+					import ipdb; ipdb.set_trace()
+	
+	
+	
+			print '{5:04d}: center: {0:.2f},{1:.2f} scale: {2:.2f}, active: {3:03d}, {4:04.0f}ms'.format(CMT_inst.center[0], CMT_inst.center[1], CMT_inst.scale_estimate, CMT_inst.active_keypoints.shape[0], 1000 * (toc - tic), frame), CMT_inst.rotation_estimate, cmt_idx
+			cmt_idx += 1
+
+		#if br_max_x > 0 and br_max_y > 0:
 		if not args.quiet:
+			cv2.line(im_draw, (tl_min_x, tl_min_y), (br_max_x, tl_min_y), (0,0, 255), 4)
+			cv2.line(im_draw, (br_max_x, tl_min_y), (br_max_x, br_max_y), (0,0, 255), 4)
+			cv2.line(im_draw, (br_max_x, br_max_y), (tl_min_x, br_max_y), (0,0, 255), 4)
+			cv2.line(im_draw, (tl_min_x, br_max_y), (tl_min_x, tl_min_y), (0,0, 255), 4)
+			
 			cv2.imshow('main', im_draw)
 
 			# Check key input
@@ -225,10 +298,27 @@ else:
 			if key == 'd':
 				import ipdb; ipdb.set_trace()
 
+		cmt_list2 = []
+		for CMT_inst in cmt_list:
+			if CMT_inst.active_keypoints.shape[0] > 1 and  CMT_inst.active_keypoints.shape[0] < ( active_points_ini * 1.5) :
+				cmt_list2.append(CMT_inst)
+		cmt_list = cmt_list2
+		
+		print max_keypoints,(active_points_ini / 2)
+		if (max_keypoints > 1) and (max_keypoints < (active_points_ini / 1.5)):
+			#print frame, (last_inserted_frame + 10)
+			if frame > (last_inserted_frame + 5):
+				print "Launching new cmt"
+				CMTnew = CMT.CMT()
+				CMTnew.estimate_scale = args.estimate_scale
+				CMTnew.estimate_rotation = args.estimate_rotation
+				#CMTnew.initialise(im_gray, max_keypoint_inst.tl, max_keypoint_inst.br)
+				CMTnew.initialise(im_gray, (tl_min_x,tl_min_y), (br_max_x,br_max_y)         )
+				cmt_list.append(CMTnew)
+				last_inserted_frame = frame
+
 		# Remember image
 		im_prev = im_gray
 
 		# Advance frame number
 		frame += 1
-
-		print '{5:04d}: center: {0:.2f},{1:.2f} scale: {2:.2f}, active: {3:03d}, {4:04.0f}ms'.format(CMT.center[0], CMT.center[1], CMT.scale_estimate, CMT.active_keypoints.shape[0], 1000 * (toc - tic), frame)

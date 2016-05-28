@@ -174,6 +174,10 @@ class CMT(object):
 				scale_estimate = median(scalechange)
 				if not self.estimate_scale:
 					scale_estimate = 1;
+				if scale_estimate > 1.2:
+					scale_estimate = 1
+				if scale_estimate < 0.8:
+					scale_estimate = 1
 
 				med_rot = median(angle_diffs)
 				if not self.estimate_rotation:
